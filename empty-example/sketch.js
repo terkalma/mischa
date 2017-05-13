@@ -15,6 +15,7 @@ function setup() {
     canvas.mouseClicked(togglePlay);
     noStroke();    
     sound.setVolume(1);
+    sound.play();
 }
 
 function togglePlay() {
