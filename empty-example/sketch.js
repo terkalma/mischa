@@ -1,20 +1,34 @@
 var canvas,
-    wave;
+    wave, 
+    sound,
+    amplitude,
+    img;
+
+function preload() {
+    sound = loadSound('mischa.mp3');
+    img   = loadImage("gradient.png");
+}    
 
 function setup() {
     canvas = createCanvas(window.innerWidth, window.innerHeight, WEBGL);
-    wave   = new Wave(window.innerWidth / 10, 0.7, 0.7, window.innerHeight / 10);    
+    wave   = new Wave(10, 0.9, 0.7, 50);    
+    canvas.mouseClicked(togglePlay);
+    noStroke();    
+    sound.setVolume(1);
+}
 
-    noStroke();
+function togglePlay() {
+  if (sound.isPlaying()) {
+    sound.pause();
+  } else {
+    sound.loop();
+  }
 }
 
 function draw() {
     background(0);
-
-    pointLight(255, 0, 0, 0, 0, 0);
-    wave.wave();
     wave.update();
-    console.log(frameRate());
+    wave.sphericalWave();
 }
 
 window.onresize = function() {
@@ -34,8 +48,14 @@ function Wave(amplitude, friction, expansion, waveLength) {
     this.waveLength = waveLength;
 
     // Time related parameters
-    this.time = 0;
-    this.step = 0.1;
+    this.time      = 0;
+    this.step      = 0.1;
+    this.detailY   = 32 - 1;
+    this.detailX   = 32 - 1;
+    this.fft       = new p5.FFT(0.1, 32);
+    this.soundAmp  = new p5.Amplitude(0.1);
+    this.level     = this.soundAmp.getLevel();  
+    this.spectrum  = this.fft.analyze();
 
     // Internal Config
     this.eps       = 1;
@@ -53,73 +73,68 @@ Wave.prototype.fn = function(x) {
     return this.height(x) * cos(TWO_PI * x / period - this.time);
 }
 
-Wave.prototype.update = function() {
-    this.time += this.step;
+Wave.prototype.update = function() {    
+    this.level    = this.soundAmp.getLevel();
+    this.step     = this.level;
+    this.time    += this.step;
+    this.spectrum = this.fft.analyze();
 }
 
-var axis = function() {
-    beginShape(LINES);
-
-    fill(255, 0, 0);
-    vertex(0, 0, 0);
-    vertex(200, 0, 0);
-
-    fill(0, 255, 0);
-    vertex(0, 0, 0);
-    vertex(0, 200, 0);
-
-    fill(0, 0, 255);
-    vertex(0, 0, 0);
-    vertex(0, 0, 200);
-    
-    endShape();
-}
-
-Wave.prototype.wave = function() {       
-    var radius = 0,    
-        currentHeight = this.height(0),
-        angleStep = TWO_PI / (this.partition - 1),
-        step = 0,
-        angle = 0,        
-        currentStep = 0,
-        brightness = 0,
-        sinA = [], 
-        cosA = [],        
-        currentZ, currentRadius;
-
-    push();      
-    rotateX(-PI / 6);
-    beginShape(TRIANGLE_STRIP);   
-
-    for (i=0; i <= this.partition; i++) {
-        sinA.push(sin(angleStep * i));
-        cosA.push(cos(angleStep * i));        
+Wave.prototype.getSpectrum = function(j) {
+    try {
+        return pow(map(this.spectrum[j], 0, 255, 0, 1), 1);
+    } catch(e) {
+        return 1;
     }
+}
 
-    while (currentHeight > this.eps && currentStep < this.maxStep) {                 
-        step = max(this.amplitude / (currentHeight + this.eps), this.minStep);          
+Wave.prototype.sphericalWave = function() {
+    var radius = 150;
+    var wave = this;
 
-        for (i=0; i <= this.partition; i++) {  
-            if (i % 2 == 0) {
-                currentRadius = radius;
-            } else {
-                currentRadius = radius + step;
+    rotateX(wave.time * 0.1);     
+    
+    texture(img);
+    ambientMaterial(0);   
+
+    // specularMaterial(255);
+    pointLight(255, 255, 255, 1500, 1500, 0);  
+
+    //  directionalLight(255, 255, 255, 0, 0, 0);
+
+    gId = 'NotCached' + '|' + wave.time;
+  
+    if(!_renderer.geometryInHash(gId)) {
+        var _sphere = function() {
+            var u,v,p;
+            for (var i = 0; i <= this.detailY; i++){
+                v = i / this.detailY;
+                for (var j = 0; j <= this.detailX; j++){
+                    u = j / this.detailX;
+                    var theta = 2 * Math.PI * u;
+                    var phi = Math.PI * v - Math.PI / 2;
+                    var waveRadius = radius * cos(phi);
+                    var currentRadius = radius + wave.fn(waveRadius);
+
+                    p = new p5.Vector(currentRadius * Math.cos(phi) * Math.sin(theta),
+                    currentRadius * Math.sin(phi),
+                    currentRadius * Math.cos(phi) * Math.cos(theta));
+                    this.vertices.push(p);                
+                    this.uvs.push([u, v]);
+                }
             }
 
-            currentZ = this.fn(currentRadius);                         
-                        
-            fill(map(currentZ, -this.amplitude, +this.amplitude, 0, 255));        
-            vertex(cosA[(i + currentStep) % this.partition] * currentRadius, 
-                sinA[(i + currentStep) % this.partition] * currentRadius, currentZ);                                                
-        }     
-    
-        radius += step;
-      
-        currentHeight = this.height(radius);   
-        currentStep += 1;                   
-    } 
-    endShape();
-    pop();
+            console.log(this.uvs[0]);
+        };
+        var sphereGeom = new p5.Geometry(this.detailX, this.detailY, _sphere);
+        sphereGeom
+          .computeFaces()
+          .computeNormals()
+          .averageNormals()
+          .averagePoleNormals();
+        _renderer.createBuffers(gId, sphereGeom);  
+    }   
+    _renderer.drawBuffers(gId);
 
-    axis();
-}
+    return this;
+};
